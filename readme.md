@@ -15,6 +15,21 @@
 - Docker 和 Docker Compose
 - Git (選用)
 
+### 檔案結構
+
+
+```
+final_project/
+├── backend/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── Dockerfile
+├── nginx/
+│   └── nginx.conf
+├── docker compose.yaml
+└── README.md
+```
+
 ### 步驟一：準備專案結構
 
 確保專案的目錄結構如下：
