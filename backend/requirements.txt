@@ -1,0 +1,7 @@
+fastapi
+psycopg2-binary
+uvicorn[standard]
+psycopg2-binary # CockroachDB Python driver
+sqlalchemy==2.0.36      # SQLAlchemy ORM
+sqlalchemy-cockroachdb
+python-dotenv   # (可選) 用於從 .env 檔案讀取環境變數

@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # --- CockroachDB Cluster ---
+  crdb1:
+    image: cockroachdb/cockroach:latest-v24.3
+    container_name: crdb1
+    command: start --insecure --advertise-addr=crdb1 --join=crdb1,crdb2,crdb3 --cache=.25 --max-sql-memory=.25
+    ports:
+      - "26257:26257" # SQL port for crdb1
+      - "8080:8080"   # Admin UI for crdb1
+    volumes:
+      - crdb1_data:/cockroach/cockroach-data
+    networks:
+      - mynetwork
+
+  crdb2:
+    image: cockroachdb/cockroach:latest-v24.3
+    container_name: crdb2
+    command: start --insecure --advertise-addr=crdb2 --join=crdb1,crdb2,crdb3 --cache=.25 --max-sql-memory=.25
+    # 不直接暴露 ports 給 host，除非有特定需求
+    # ports:
+    #   - "26258:26257"
+    #   - "8081:8080"
+    volumes:
+      - crdb2_data:/cockroach/cockroach-data
+    depends_on:
+      - crdb1
+    networks:
+      - mynetwork
+
+  crdb3:
+    image: cockroachdb/cockroach:latest-v24.3
+    container_name: crdb3
+    command: start --insecure --advertise-addr=crdb3 --join=crdb1,crdb2,crdb3 --cache=.25 --max-sql-memory=.25
+    # 不直接暴露 ports 給 host，除非有特定需求
+    # ports:
+    #   - "26259:26257"
+    #   - "8082:8080"
+    volumes:
+      - crdb3_data:/cockroach/cockroach-data
+    depends_on:
+      - crdb1
+    networks:
+      - mynetwork
+
+  # Helper service to initialize the CockroachDB cluster
+  # This only runs once.
+  crdb_init:
+    image: cockroachdb/cockroach:latest-v24.3
+    container_name: crdb_init
+    entrypoint: ["/bin/sh", "-c", "cockroach init --insecure --host=crdb1:26257 || exit 0"]
+
+    depends_on:
+      - crdb1
+      - crdb2
+      - crdb3
+    networks:
+      - mynetwork
+
+  # --- FastAPI Applications ---
+  fastapi_app1:
+    image: final_project-fastapi_app:latest
+    container_name: fastapi_app1
+    environment:
+      DATABASE_URL: "postgresql://root@crdb1:26257/defaultdb?sslmode=disable"
+    # ports:
+    #   - "8001:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      crdb_init:
+        condition: service_completed_successfully
+    networks:
+      - mynetwork
+    entrypoint: ["/bin/bash", "-c", "python main.py"]
+
+  fastapi_app2:
+    image: final_project-fastapi_app:latest
+    container_name: fastapi_app2
+    environment:
+      DATABASE_URL: "postgresql://root@crdb2:26257/defaultdb?sslmode=disable" # 連到不同節點做簡單的客戶端負載均衡
+    volumes:
+      - ./backend:/app
+    depends_on:
+      crdb_init:
+        condition: service_completed_successfully
+    networks:
+      - mynetwork
+    # entrypoint: ["/bin/sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000"]
+    entrypoint: ["/bin/bash", "-c", "python main.py"]
+
+
+  # --- Nginx Reverse Proxy ---
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "80:80" # HTTP
+      # - "443:443" # HTTPS (需要額外設定 SSL 憑證)
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # 如果有 SSL 憑證:
+      # - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - fastapi_app1
+      - fastapi_app2
+    networks:
+      - mynetwork
+    # restart: unless-stopped
+
+volumes:
+  crdb1_data:
+  crdb2_data:
+  crdb3_data:
+
+networks:
+  mynetwork:
+    driver: bridge
