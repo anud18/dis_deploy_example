@@ -19,7 +19,7 @@
 
 
 ```
-final_project/
+dis_deploy_example/
 ├── backend/
 │   ├── main.py
 │   ├── requirements.txt
@@ -30,31 +30,21 @@ final_project/
 └── README.md
 ```
 
-### 步驟一：準備專案結構
+### 步驟一：Git clone 專案
 
-確保專案的目錄結構如下：
-
-```
-final_project/
-├── backend/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── nginx/
-│   └── nginx.conf
-├── docker compose.yaml
-└── README.md
+```bash
+https://github.com/anud18/dis_deploy_example.git
 ```
 
 ### 步驟二：建立 FastAPI Docker Image
 
 1. 將你的 requirements.txt 檔案放在 backend 目錄中
 
-
+獲得 requirements.txt 檔案的方式：
 ```bash
 pip freeze > requirements.txt
 ```
-2. 建立 Docker 映像檔
+2. 建立 Docker Image
 
 ```bash
 cd backend
@@ -71,6 +61,12 @@ cd ..
 ```bash
 docker compose up -d
 ```
+
+如果是第一次啟動可以先不加 -d 看有沒有 error：
+
+```bash 
+docker compose up
+``` 
 
 這將啟動：
 - 3 節點 CockroachDB 叢集
@@ -110,12 +106,6 @@ curl -X GET "http://localhost:80/items/"
 
 ```bash
 docker compose down
-```
-
-如果要同時刪除所有資料卷（這將刪除所有資料庫資料）：
-
-```bash
-docker compose down -v
 ```
 
 ## 開發與調試
