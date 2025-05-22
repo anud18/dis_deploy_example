@@ -40,10 +40,7 @@ https://github.com/anud18/dis_deploy_example.git
 
 1. 將你的 requirements.txt 檔案放在 backend 目錄中(Optional)：
 
-獲得 requirements.txt 檔案的方式：
-```bash
-pip freeze > requirements.txt
-```
+
 2. 建立後端的 API Docker image：
 
 ```bash
