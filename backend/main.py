@@ -1,9 +1,7 @@
 import os
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
-from sqlalchemy_cockroachdb import run_transaction
+from flask import Flask, request, jsonify, abort
 import sqlalchemy_cockroachdb.base
 from sqlalchemy import create_engine, Column, Integer, String, text
 from sqlalchemy.ext.declarative import declarative_base
@@ -45,117 +43,142 @@ class ItemDB(Base):
     description = Column(String, index=True, nullable=True)
 
 # 啟動時創建資料表 (如果不存在)
-# 注意：在生產環境中，通常會使用遷移工具 (如 Alembic) 來管理資料庫結構變更
 Base.metadata.create_all(bind=engine)
 
+# --- Flask 應用程式實例 ---
+app = Flask(__name__)
+app.config["JSONIFY_PRETTYPRINT_REGULAR"] = True
 
-# --- Pydantic 模型 (Schemas for Request/Response) ---
-class ItemBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-class ItemCreate(ItemBase):
-    pass # 繼承 ItemBase 的所有欄位
-
-class Item(ItemBase):
-    id: int
-
-    class Config:
-        orm_mode = True # 允許 Pydantic 從 ORM 模型讀取資料
-
-
-# --- FastAPI 應用程式實例 ---
-app = FastAPI(
-    title="My FastAPI ORM App",
-    description="A basic example of FastAPI with SQLAlchemy ORM and CockroachDB.",
-    version="0.1.0",
-)
-
-
-# --- 資料庫會話依賴 (Dependency for DB Session) ---
+# --- 資料庫會話處理 ---
 def get_db():
     db = SessionLocal()
     try:
-        yield db
+        return db
     finally:
         db.close()
 
+# 輔助函數將 ItemDB 轉換為字典
+def item_to_dict(item):
+    return {
+        "id": item.id,
+        "name": item.name,
+        "description": item.description
+    }
 
 # --- API 端點 (Endpoints) ---
-@app.post("/items/", response_model=Item, status_code=201)
-def create_item(item: ItemCreate, db: Session = Depends(get_db)):
+@app.route("/items/", methods=["POST"])
+def create_item():
     """
     創建一個新的 item。
     """
-    db_item = ItemDB(**item.dict()) # 將 Pydantic 模型轉換為 SQLAlchemy 模型
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item) # 刷新以獲取資料庫生成的 ID
-    return db_item
+    data = request.json
+    db = get_db()
+    try:
+        db_item = ItemDB(name=data["name"], description=data.get("description"))
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
+        return jsonify(item_to_dict(db_item)), 201
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 400
+    finally:
+        db.close()
 
-@app.get("/items/{item_id}", response_model=Item)
-def read_item(item_id: int, db: Session = Depends(get_db)):
+@app.route("/items/<int:item_id>", methods=["GET"])
+def read_item(item_id):
     """
     根據 ID 獲取一個 item。
     """
-    db_item = db.query(ItemDB).filter(ItemDB.id == item_id).first()
-    if db_item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return db_item
+    db = get_db()
+    try:
+        db_item = db.query(ItemDB).filter(ItemDB.id == item_id).first()
+        if db_item is None:
+            abort(404, description="Item not found")
+        return jsonify(item_to_dict(db_item))
+    finally:
+        db.close()
 
-@app.get("/items/", response_model=List[Item])
-def read_items(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+@app.route("/items/", methods=["GET"])
+def read_items():
     """
     獲取 item 列表，支持分頁。
     """
-    items = db.query(ItemDB).offset(skip).limit(limit).all()
-    return items
+    skip = request.args.get("skip", 0, type=int)
+    limit = request.args.get("limit", 10, type=int)
+    
+    db = get_db()
+    try:
+        items = db.query(ItemDB).offset(skip).limit(limit).all()
+        return jsonify([item_to_dict(item) for item in items])
+    finally:
+        db.close()
 
-@app.put("/items/{item_id}", response_model=Item)
-def update_item(item_id: int, item: ItemCreate, db: Session = Depends(get_db)):
+@app.route("/items/<int:item_id>", methods=["PUT"])
+def update_item(item_id):
     """
     根據 ID 更新一個 item。
     """
-    db_item = db.query(ItemDB).filter(ItemDB.id == item_id).first()
-    if db_item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+    data = request.json
+    db = get_db()
+    try:
+        db_item = db.query(ItemDB).filter(ItemDB.id == item_id).first()
+        if db_item is None:
+            abort(404, description="Item not found")
 
-    # 更新欄位
-    db_item.name = item.name
-    db_item.description = item.description
+        # 更新欄位
+        db_item.name = data["name"]
+        db_item.description = data.get("description")
 
-    db.commit()
-    db.refresh(db_item)
-    return db_item
+        db.commit()
+        db.refresh(db_item)
+        return jsonify(item_to_dict(db_item))
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 400
+    finally:
+        db.close()
 
-@app.delete("/items/{item_id}", response_model=Item) # 或者可以只返回狀態碼
-def delete_item(item_id: int, db: Session = Depends(get_db)):
+@app.route("/items/<int:item_id>", methods=["DELETE"])
+def delete_item(item_id):
     """
     根據 ID 刪除一個 item。
     """
-    db_item = db.query(ItemDB).filter(ItemDB.id == item_id).first()
-    if db_item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+    db = get_db()
+    try:
+        db_item = db.query(ItemDB).filter(ItemDB.id == item_id).first()
+        if db_item is None:
+            abort(404, description="Item not found")
 
-    db.delete(db_item)
-    db.commit()
-    return db_item # 返回被刪除的項目，或一個確認訊息
+        deleted_item = item_to_dict(db_item)
+        db.delete(db_item)
+        db.commit()
+        return jsonify(deleted_item)
+    finally:
+        db.close()
 
-@app.get("/")
-async def root():
-    return {"message": "FastAPI ORM App is running. Go to /docs for API documentation."}
+@app.route("/")
+def root():
+    return jsonify({"message": "Flask ORM App is running."})
 
-# --- (可選) 簡單的資料庫連線測試端點 ---
-@app.get("/db-test/")
-def test_db_connection(db: Session = Depends(get_db)):
+# --- 資料庫連線測試端點 ---
+@app.route("/db-test/")
+def test_db_connection():
+    db = get_db()
     try:
         # 執行一個簡單的查詢
         db.execute(text("SELECT 1"))
-        return {"status": "success", "message": "Database connection successful."}
+        return jsonify({"status": "success", "message": "Database connection successful."})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+        return jsonify({"status": "error", "message": f"Database connection failed: {str(e)}"}), 500
+    finally:
+        db.close()
 
-# 如果您想直接用 uvicorn 運行這個檔案 (非 Docker 環境)
+# 處理 404 錯誤
+@app.errorhandler(404)
+def resource_not_found(e):
+    return jsonify(error=str(e)), 404
+
+# 如果直接運行這個檔案
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=8000, debug=True)
